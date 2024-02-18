@@ -7,6 +7,8 @@ import rasterio
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from PIL import Image 
+import pytesseract
 
 def get_google_api():
     with open("secrets.json", 'r') as file:
@@ -14,7 +16,7 @@ def get_google_api():
     return keys["GOOGLE_API_KEY"]
 
 def get_open_ai_api():
-    with open("app/secrets.json", 'r') as file:
+    with open("secrets.json", 'r') as file:
         keys = json.load(file)
     return keys["OPEN_AI_API_KEY"]
 
@@ -99,7 +101,16 @@ def RAG_planet(place:str, question:str):
     SentenceTransformerEmbeddings= embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-mpnet-base-v2")
     collection= chroma_client.get_collection("EarthVoice", embedding_function=SentenceTransformerEmbeddings)
 
-    dict_places={"Amazon Rain Forest": "data/amazon.md", "Mesoamerican Reef": "data/mesoamerican_reef.md"}
+    dict_places={"Amazon Rain Forest": "data/amazon.md", "Mesoamerican Reef": "data/mesoamerican_reef.md",
+                "Northern Great Plains": "data/northern_great_plains.md", "Chihuahuan Dessert":"data/chihuahuan_dessert.md", "Galapagos":"data/galapagos.md", 
+                "Pantanal":"data/pantanal.md", "Southern Chile":"data/southern_chile.md",
+                "Amur Heilong":"data/amur_heilong.md", "Arctic":"data/arctic.md", "Atlantic Forest":"data/atlantic_forest.md",
+                "Coastal East Africa":"data/coastal_east_africa.md", "Congo Basin":"data/congo_basin.md", 
+                "Coral Triangle":"data/coral_triangle.md", "Eastern Himalayas":"data/eastern_himalayas.md",
+                "Greater Mekong":"data/greater_mekong.md", "Madagascar":"data/madagascar.md", 
+                "Namibia":"data/namibia.md", "Yagtze":"data/yangtze.md"
+                }
+    
 
     file= dict_places[place]
 
@@ -208,3 +219,30 @@ def heatmap_solar_panels(address):
 
     image_final= np.array((masked_image_norm + data_hot_final)*255, dtype=np.uint8)
     return image_final
+
+def get_label_info(image_path):
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    img = image_path
+
+    # Use pytesseract to do OCR on the image
+    text = pytesseract.image_to_string(img)
+    print(text)
+
+    client = OpenAI(api_key= get_open_ai_api())
+
+    completion = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "system", "content": """You are an expert in sustainable fashion. You know this about materials: 
+            - High carbon efficiency: Linen, Hemp
+            - Mid-level carbon efficiency: Carbon, Wool, Denim, Silk
+            - Low carbon efficiency: Polyester, Rayon, Nylon 
+        """},
+        {"role": "user", "content": f"""Classify into one of this categories (High carbon efficiency, Mid-level carbon efficiency, Low carbon efficiency) the following label of the cloth. Based on the percentages and classification, give a rating from 1 (low efficiency) to 10 (high efficiency).   
+        
+        LABEL: {text}"""},
+    ]
+    )
+
+    # Return the text
+    return completion.choices[0].message.content
