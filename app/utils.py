@@ -1,5 +1,12 @@
 import requests
 import json
+import chromadb
+from chromadb.utils import embedding_functions
+from openai import OpenAI
+import rasterio
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
 def get_google_api():
     with open("secrets.json", 'r') as file:
@@ -85,3 +92,119 @@ def get_green_restaurants(address):
 def route_map(origin, destination, mode):
     link= f"""https://www.google.com/maps/embed/v1/directions?key={get_google_api()}&origin={origin}&destination={destination}&mode={mode.lower()}"""
     return link
+
+def RAG_planet(place:str, question:str):
+
+    chroma_client = chromadb.PersistentClient(path="Chromadb/")
+    SentenceTransformerEmbeddings= embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-mpnet-base-v2")
+    collection= chroma_client.get_collection("EarthVoice", embedding_function=SentenceTransformerEmbeddings)
+
+    dict_places={"Amazon Rain Forest": "data/amazon.md", "Mesoamerican Reef": "data/mesoamerican_reef.md"}
+
+    file= dict_places[place]
+
+    results= collection.query(
+        query_texts=[question],
+        n_results=10,
+        where= {"source":file},
+        include= [ "documents" ]
+    )
+
+    context= results["documents"][0][0]
+
+    client = OpenAI(api_key= get_open_ai_api())
+
+    completion = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "system", "content": f"You are a personification of the {place} speaking as the planet. You know this: {context}"},
+        {"role": "user", "content": f"""Answer briefly the following question using only the following context. If it is not related to the {place}, you don't know the anser and it doesn't come in the context, you can skip it. 
+        
+        QUESTION: {question}"""},
+    ]
+    )
+
+    return {"Question": question, "Context": context, "Answer":completion.choices[0].message.content}
+
+def heatmap_solar_panels(address):
+    coordinates = get_coordinates(address)
+    lat = coordinates['lat']
+    lon = coordinates['lon']
+
+    url = "https://solar.googleapis.com/v1/dataLayers:get"
+    params = {
+        "location.latitude": lat,
+        "location.longitude": lon,
+        "radiusMeters": 100,
+        "view": "FULL_LAYERS",
+        "requiredQuality": "HIGH",
+        "pixelSizeMeters": 0.5,
+        "key": get_google_api()
+    }
+
+    response = requests.get(url, params=params)
+
+    if response.status_code == 200:
+        # Request was successful
+        data = response.json()
+        print(data)
+    else:
+        # Request failed
+        print(f"Error: {response.status_code}, {response.text}")
+
+    print(data)
+    urls_base= ["rgbUrl", "maskUrl", "annualFluxUrl"]
+    for url_base in urls_base:
+        url_map= data[url_base]
+        url_map+= "&key="+get_google_api()
+        response = requests.get(url_map)
+        if response.status_code == 200:
+            # Request was successful
+            # Assuming the response is a binary file, you might want to save it
+            with open(url_base+".tif", "wb") as f:
+                f.write(response.content)
+            print("File saved successfully.")
+        else:
+            # Request failed
+            print(f"Error: {response.status_code}, {response.text}")
+
+    geotiff_path = 'rgbUrl.tif'
+
+    # Open the GeoTIFF file
+    dataset = rasterio.open(geotiff_path)
+    data_r = dataset.read(1)
+    data_g = dataset.read(2)
+    data_b = dataset.read(3)
+    data_rgb = np.dstack((data_r, data_g, data_b))
+
+    geotiff_path = 'maskUrl.tif'
+    dataset = rasterio.open(geotiff_path)
+    data_mask = dataset.read(1) 
+    complement_mask = 1 - data_mask
+
+    broadcasted_complement_mask = np.expand_dims(complement_mask, axis=-1)
+
+    masked_image = data_rgb * broadcasted_complement_mask
+    masked_image_norm = masked_image / 255.0
+
+    # Path to your GeoTIFF file
+    geotiff_path = 'annualFluxUrl.tif'
+
+    # Open the GeoTIFF file
+    dataset = rasterio.open(geotiff_path)
+    data_heat = dataset.read(1)
+    cmap_hot = plt.get_cmap('hot')
+    norm = mcolors.Normalize(vmin=data_heat.min(), vmax=data_heat.max())
+    data_hot = cmap_hot(norm(data_heat))
+    data_hot= data_hot[:, :, :3]
+
+    geotiff_path = 'maskUrl.tif'
+    dataset = rasterio.open(geotiff_path)
+    data_mask = dataset.read(1) 
+
+    broadcasted_mask = np.expand_dims(data_mask, axis=-1)
+    broadcasted_mask
+    data_hot_final = data_hot * broadcasted_mask
+
+    image_final= np.array((masked_image_norm + data_hot_final)*255, dtype=np.uint8)
+    return image_final
