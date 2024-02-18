@@ -81,3 +81,7 @@ def get_green_restaurants(address):
     link= base_link+markers+"&key="+get_google_api()
 
     return {'names': results, 'main_map': main_map, 'static_map': link}
+
+def route_map(origin, destination, mode):
+    link= f"""https://www.google.com/maps/embed/v1/directions?key={get_google_api()}&origin={origin}&destination={destination}&mode={mode.lower()}"""
+    return link
